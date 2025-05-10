@@ -1,5 +1,7 @@
 package com.cevher.keycloak;
 
+import java.util.StringJoiner;
+
 import org.jboss.logging.Logger;
 import org.keycloak.events.Event;
 import org.keycloak.events.EventListenerProvider;
@@ -11,8 +13,6 @@ import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.RealmProvider;
 import org.keycloak.models.UserModel;
-
-import java.util.StringJoiner;
 
 public class CustomEventListenerProvider
         implements EventListenerProvider {
@@ -39,7 +39,7 @@ public class CustomEventListenerProvider
 
             RealmModel realm = this.model.getRealm(event.getRealmId());
             UserModel user = this.session.users().getUserById(realm, event.getUserId());
-            sendUserData(user);
+            sendUserData(user, OperationType.CREATE);
         }
 
     }
@@ -51,28 +51,49 @@ public class CustomEventListenerProvider
         log.debugf("Resource type: %s", adminEvent.getResourceType());
         log.debugf("Operation type: %s", adminEvent.getOperationType());
         log.debugf("AdminEvent.toString(): %s", toString(adminEvent));
-        if (ResourceType.USER.equals(adminEvent.getResourceType())
-                && OperationType.CREATE.equals(adminEvent.getOperationType())) {
+        if (ResourceType.USER.equals(adminEvent.getResourceType())        ) {
             RealmModel realm = this.model.getRealm(adminEvent.getRealmId());
-            UserModel user = this.session.users().getUserById(realm, adminEvent.getResourcePath().substring(6));
 
-            sendUserData(user);
+            if (OperationType.DELETE.equals(adminEvent.getOperationType())) {
+                sendDeletedUserId(adminEvent.getResourcePath().substring(6));
+            } else {
+                UserModel user = this.session.users().getUserById(realm, adminEvent.getResourcePath().substring(6));
+                sendUserData(user, adminEvent.getOperationType());
+            }
+
         }
     }
 
-    private void sendUserData(UserModel user) {
+    private void sendDeletedUserId(String id) {
+        String data = """
+                {
+                    "id": "%s",
+                    "eventType": "DELETE"
+                }
+                """.formatted(id);
+        try {
+            Client.postService(data);
+            log.info("A new user has been created and post API");
+        } catch (Exception e) {
+            log.errorf("Failed to call API: %s", e);
+        }
+    }
+
+    private void sendUserData(UserModel user, OperationType operationType) {
         String data = """
                 {
                     "id": "%s",
                     "email": "%s",
                     "userName": "%s",
                     "firstName": "%s",
-                    "lastName": "%s"
+                    "lastName": "%s",
+                    "eventType": "%s"
                 }
-                """.formatted(user.getId(), user.getEmail(), user.getUsername(), user.getFirstName(), user.getLastName());
+                """.formatted(user.getId(), user.getEmail(), user.getUsername(), user.getFirstName(),
+                user.getLastName(), operationType.name());
         try {
             Client.postService(data);
-            log.debug("A new user has been created and post API");
+            log.info("A new user has been created and post API");
         } catch (Exception e) {
             log.errorf("Failed to call API: %s", e);
         }
